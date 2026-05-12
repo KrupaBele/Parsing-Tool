@@ -37,6 +37,18 @@ function isBackendPlaceholder(s) {
 }
 
 /**
+ * Use Excel’s `="…"` CSV form only when Excel would corrupt the value (long / digit-only IDs).
+ * Alphanumeric codes (e.g. PP001) stay plain so server-side CSV parsers match DB `employeeCode`.
+ * @param {string} s trimmed non-empty cell text
+ */
+function needsExcelForcedText(fieldKey, s) {
+  if (!fieldKey || !EXCEL_FORCE_TEXT_FIELDS.has(fieldKey) || s === '') return false;
+  if (isBackendPlaceholder(s)) return false;
+  if (/[A-Za-z]/.test(s)) return false;
+  return true;
+}
+
+/**
  * `"=""_inner_"""` so Excel imports/opens as text literal (no scientific notation).
  * @param {string} s raw cell text (no CSV wrapping yet)
  */
@@ -77,11 +89,7 @@ function escapeCsvCell(val, fieldKey = null) {
     s = coerceScientificDigitsToPlain(s);
   }
   const plain = s;
-  if (
-    fieldKey &&
-    EXCEL_FORCE_TEXT_FIELDS.has(fieldKey) &&
-    !isBackendPlaceholder(plain)
-  ) {
+  if (needsExcelForcedText(fieldKey, plain)) {
     return excelForcedTextCsvField(plain);
   }
   if (/[",\n\r]/.test(plain)) return `"${plain.replace(/"/g, '""')}"`;
