@@ -1,5 +1,5 @@
 import { cellToString } from './excelUtils.js';
-import { fieldsForTarget } from './backendSchema.js';
+import { fieldsForTarget, DATE_CSV_FIELD_KEYS } from './backendSchema.js';
 
 /**
  * Backend CSV keys whose values Excel tends to open as numbers (scientific notation /
@@ -30,6 +30,8 @@ const EXCEL_FORCE_TEXT_FIELDS = new Set([
   'bankAddress',
   'bankName',
 ]);
+
+for (const k of DATE_CSV_FIELD_KEYS) EXCEL_FORCE_TEXT_FIELDS.add(k);
 
 /** Placeholder used by backend uploads — keep as plain cell, not a formula. */
 function isBackendPlaceholder(s) {
@@ -120,7 +122,7 @@ export function gridToBackendRows(grid, headerRowIndex, mapping, targetType) {
         continue;
       }
       const raw = line[col];
-      obj[f] = cellToString(raw);
+      obj[f] = cellToString(raw, f);
       if (obj[f] !== '') anyMapped = true;
     }
     if (anyMapped) rows.push(obj);

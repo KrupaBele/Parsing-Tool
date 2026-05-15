@@ -9,6 +9,24 @@ export const TARGET_TYPES = {
   attendance: 'attendance',
 };
 
+/**
+ * Backend CSV keys that store calendar dates. Used when reading Excel so numeric
+ * serials in those columns are formatted as dd-mm-yyyy (not mistaken for IDs).
+ */
+export const DATE_CSV_FIELD_KEYS = new Set([
+  'dateOfBirth',
+  'dateOfJoining',
+  'dateOfExit',
+  'dateOnWhichCompletionOf480DaysService',
+  'dateOnWhichMadePermanent',
+  'dateOfPayment',
+  'periodFrom',
+  'periodTo',
+  'dateOfRevocation',
+  'spreadoverFrom',
+  'spreadoverTo',
+]);
+
 export const EMPLOYEE_CSV_FIELDS = [
   'branchcode',
   'employeeCode',
@@ -100,7 +118,6 @@ export const PAY_REGISTER_CSV_FIELDS = [
   'uan',
   'pan',
   'fnf',
-  'arrear',
   'gender',
   'youngPerson',
   'noOfDaysWorked',
@@ -156,6 +173,10 @@ export const PAY_REGISTER_CSV_FIELDS = [
   'spreadoverFrom',
   'spreadoverTo',
   'relay',
+  'basicArrear',
+  'hraArrear',
+  'specialAllowanceArrear',
+  'pfArrear',
 ];
 
 const DAY_FIELDS = Array.from({ length: 31 }, (_, i) => String(i + 1));
@@ -269,7 +290,6 @@ export const SYNONYMS = {
     ],
     dateOfPayment: ['dateofpayment', 'date of payment', 'pay date'],
     fnf: ['fnf', 'full and final'],
-    arrear: ['arrear', 'arrears'],
     fines: ['fines'],
     unpaidAccumulations: ['unpaidaccumulations', 'unpaid accumulations'],
     rateAtWhichSubsistenceAllowanceCalculatedAndAmountPaid: [
@@ -319,14 +339,23 @@ export const SYNONYMS = {
     cityCompensatoryAllowance: ['citycompensatoryallowance', 'cca'],
     remarks: ['remarks', 'remark'],
     loan: ['loan'],
-    specialBasic: ['specialbasic', 'special basic', 'basic arrear'],
+    specialBasic: ['specialbasic', 'special basic'],
     compensatoryHolidyay: ['compensatoryholidyay', 'compensatory holiday'],
     spreadoverFrom: ['spreadoverfrom', 'spreadover from'],
     spreadoverTo: ['spreadoverto', 'spreadover to'],
     relay: ['relay'],
+    basicArrear: ['basicarrear', 'basic arrear', 'basic arrears'],
+    hraArrear: ['hraarrear', 'hra arrear', 'hra arrears', 'house rent arrear'],
+    specialAllowanceArrear: [
+      'specialallowancearrear',
+      'special allowance arrear',
+      'special allowance arrears',
+      'spl allowance arrear',
+    ],
+    pfArrear: ['pfarrear', 'pf arrear', 'pf arrears', 'provident fund arrear', 'provident fund arrears'],
   },
   [TARGET_TYPES.attendance]: {
-    branchcode: ['branchcode', 'branch code', 'branch'],
+    branchcode: ['branchcode', 'branchcod', 'branch code', 'branch'],
     employeeCode: ['employeecode', 'employee code', 'employee id', 'emp id', 'emp code'],
     employeeName: ['employeename', 'employee name', 'name'],
     periodFrom: ['periodfrom', 'period from', 'from date', 'attendance from'],
