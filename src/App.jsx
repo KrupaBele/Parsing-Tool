@@ -1,7 +1,18 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchBranches } from "./api.js";
+import {
+  applyStateBranchAllocation,
+  attachLocationToRows,
+  extractStateCountsFromGrid,
+  stripAllocationFields,
+  suggestUnmappedStateBranchMap,
+} from "./branchAllocation.js";
+import EntitySearch from "./EntitySearch.jsx";
+import StateBranchAllocationPanel from "./StateBranchAllocationPanel.jsx";
 import {
   fieldsForTarget,
   guessTargetFromHeaders,
+  mappingFieldsForTarget,
   normalizeHeader,
   TARGET_TYPES,
 } from "./backendSchema.js";
@@ -9,7 +20,6 @@ import { autoMapColumns } from "./buildMapping.js";
 import { gridToBackendRows, rowsToCsvString } from "./csvExport.js";
 import { readWorkbook, sheetToGrid } from "./excelUtils.js";
 import { detectHeaderRow } from "./headerDetect.js";
-
 const TARGET_LABELS = {
   [TARGET_TYPES.employee]: "Employee master (bulk upload)",
   [TARGET_TYPES.payRegister]: "Pay register (bulk upload)",
@@ -47,8 +57,70 @@ export default function App() {
   const [headerConfidence, setHeaderConfidence] = useState(
     /** @type {string | null} */ (null),
   );
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [selectedCompanyName, setSelectedCompanyName] = useState("");
+  const [branches, setBranches] = useState(
+    /** @type {{ _id: string, branchCode: string, branchName: string, branchState: string }[]} */ ([]),
+  );
+  const [stateBranchMap, setStateBranchMap] = useState(
+    /** @type {Record<string, string>} */ ({}),
+  );
+  const [useStateAllocation, setUseStateAllocation] = useState(true);
 
-  const fieldList = useMemo(() => fieldsForTarget(targetType), [targetType]);
+  const fieldList = useMemo(
+    () => mappingFieldsForTarget(targetType),
+    [targetType],
+  );
+  const exportFieldList = useMemo(
+    () => fieldsForTarget(targetType),
+    [targetType],
+  );
+
+  const excelStateCounts = useMemo(
+    () => extractStateCountsFromGrid(grid, headerRowIndex, mapping),
+    [grid, headerRowIndex, mapping],
+  );
+
+  const allBranchOptions = useMemo(
+    () =>
+      branches.map((b) => ({
+        branchCode: b.branchCode || "",
+        branchName: b.branchName || "",
+      })),
+    [branches],
+  );
+
+  useEffect(() => {
+    if (!selectedCompanyId) {
+      setBranches([]);
+      return;
+    }
+    let cancelled = false;
+    fetchBranches(selectedCompanyId)
+      .then((list) => {
+        if (cancelled) return;
+        setBranches(list);
+        setStateBranchMap((prev) =>
+          suggestUnmappedStateBranchMap(list, {}, prev),
+        );
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err?.message || String(err));
+          setBranches([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCompanyId]);
+
+  useEffect(() => {
+    if (!branches.length) return;
+    setStateBranchMap((prev) =>
+      suggestUnmappedStateBranchMap(branches, excelStateCounts, prev),
+    );
+  }, [branches, excelStateCounts]);
 
   const [workbook, setWorkbook] = useState(
     /** @type {import('xlsx').WorkBook | null} */ (null),
@@ -66,6 +138,7 @@ export default function App() {
     const useTarget = tgt || guessed;
     setTargetType(useTarget);
     const m = autoMapColumns(cleanHdrs, useTarget);
+    if (useTarget !== TARGET_TYPES.employee) m.branchcode = "";
     setMapping(m);
   }, []);
 
@@ -137,19 +210,39 @@ export default function App() {
     const cleanHdrs = headers.map((h) =>
       String(h).startsWith("__empty_") ? "" : String(h),
     );
-    setMapping(autoMapColumns(cleanHdrs, t));
+    const m = autoMapColumns(cleanHdrs, t);
+    if (t !== TARGET_TYPES.employee) m.branchcode = "";
+    setMapping(m);
     setPreviewRows([]);
   };
 
+  const isEmployeeExport = targetType === TARGET_TYPES.employee;
+
   const buildRows = useCallback(() => {
     let rows = gridToBackendRows(grid, headerRowIndex, mapping, targetType);
-    const br = defaultBranchcode.trim();
-    if (br) {
-      rows = rows.map((r) => ({
-        ...r,
-        branchcode: r.branchcode && r.branchcode !== "" ? r.branchcode : br,
-      }));
+
+    if (isEmployeeExport) {
+      let allocRows = attachLocationToRows(
+        rows,
+        grid,
+        headerRowIndex,
+        mapping,
+      );
+      if (useStateAllocation && Object.keys(stateBranchMap).length) {
+        allocRows = applyStateBranchAllocation(allocRows, stateBranchMap);
+      }
+      const br = defaultBranchcode.trim();
+      if (br) {
+        allocRows = allocRows.map((r) => ({
+          ...r,
+          branchcode: r.branchcode && r.branchcode !== "" ? r.branchcode : br,
+        }));
+      }
+      rows = allocRows.map(stripAllocationFields);
+    } else {
+      rows = rows.map((r) => ({ ...r, branchcode: "" }));
     }
+
     if (targetType === TARGET_TYPES.attendance) {
       const pf = periodFrom.trim();
       const pt = periodTo.trim();
@@ -165,9 +258,12 @@ export default function App() {
     headerRowIndex,
     mapping,
     targetType,
+    isEmployeeExport,
     defaultBranchcode,
     periodFrom,
     periodTo,
+    useStateAllocation,
+    stateBranchMap,
   ]);
 
   const onPreview = () => {
@@ -234,6 +330,29 @@ export default function App() {
           columns to your backend bulk-upload keys, then download CSV.
         </p>
       </header>
+
+      <div style={card}>
+        <EntitySearch
+          selectedId={selectedCompanyId}
+          selectedLabel={selectedCompanyName}
+          onSelect={(c) => {
+            setSelectedCompanyId(c?._id || "");
+            setSelectedCompanyName(c?.companyName || "");
+          }}
+          onError={setError}
+        />
+        {branches.length > 0 && isEmployeeExport ? (
+          <StateBranchAllocationPanel
+            branches={branches}
+            excelStateCounts={excelStateCounts}
+            stateBranchMap={stateBranchMap}
+            useStateAllocation={useStateAllocation}
+            onUseStateAllocationChange={setUseStateAllocation}
+            onStateBranchMapChange={setStateBranchMap}
+            allBranches={allBranchOptions}
+          />
+        ) : null}
+      </div>
 
       <div style={card}>
         <label style={{ fontWeight: 600, display: "block", marginBottom: 8 }}>
@@ -326,19 +445,21 @@ export default function App() {
               gap: 16,
             }}
           >
-            <div>
-              <label
-                style={{ fontWeight: 600, display: "block", marginBottom: 6 }}
-              >
-                Default branchcode
-              </label>
-              <input
-                placeholder="e.g. MAIN (fills branchcode if unmapped)"
-                value={defaultBranchcode}
-                onChange={(e) => setDefaultBranchcode(e.target.value)}
-                style={{ width: 280, padding: "8px 10px" }}
-              />
-            </div>
+            {isEmployeeExport ? (
+              <div>
+                <label
+                  style={{ fontWeight: 600, display: "block", marginBottom: 6 }}
+                >
+                  Default branchcode
+                </label>
+                <input
+                  placeholder="e.g. MAIN (fills branchcode if unmapped)"
+                  value={defaultBranchcode}
+                  onChange={(e) => setDefaultBranchcode(e.target.value)}
+                  style={{ width: 280, padding: "8px 10px" }}
+                />
+              </div>
+            ) : null}
             {targetType === TARGET_TYPES.attendance ? (
               <>
                 <div>
@@ -403,43 +524,59 @@ export default function App() {
               paddingRight: 8,
             }}
           >
-            {fieldList.map((field) => (
-              <div key={field} style={{ display: "contents" }}>
-                <label
-                  style={{
-                    fontSize: 13,
-                    alignSelf: "center",
-                    fontFamily: "ui-monospace, monospace",
-                  }}
-                >
-                  {field}
-                </label>
-                <select
-                  value={
-                    mapping[field] === "" || mapping[field] == null
-                      ? ""
-                      : String(mapping[field])
-                  }
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setMapping((prev) => ({
-                      ...prev,
-                      [field]: v === "" ? "" : Number(v),
-                    }));
-                  }}
-                  style={{ padding: "6px 8px", fontSize: 13 }}
-                >
-                  {sourceOptions.map((opt, oi) => (
-                    <option
-                      key={`${field}-col-${oi}`}
-                      value={opt.value === "" ? "" : String(opt.value)}
-                    >
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
+            {fieldList.map((field) => {
+              const branchDisabled =
+                field === "branchcode" && !isEmployeeExport;
+              return (
+                <div key={field} style={{ display: "contents" }}>
+                  <label
+                    style={{
+                      fontSize: 13,
+                      alignSelf: "center",
+                      fontFamily: "ui-monospace, monospace",
+                      color: branchDisabled ? "#94a3b8" : undefined,
+                    }}
+                  >
+                    {field}
+                  </label>
+                  <select
+                    value={
+                      branchDisabled
+                        ? ""
+                        : mapping[field] === "" || mapping[field] == null
+                          ? ""
+                          : String(mapping[field])
+                    }
+                    disabled={branchDisabled}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setMapping((prev) => ({
+                        ...prev,
+                        [field]: v === "" ? "" : Number(v),
+                      }));
+                    }}
+                    style={{
+                      padding: "6px 8px",
+                      fontSize: 13,
+                      opacity: branchDisabled ? 0.65 : 1,
+                    }}
+                  >
+                    {branchDisabled ? (
+                      <option value="">—</option>
+                    ) : (
+                      sourceOptions.map((opt, oi) => (
+                        <option
+                          key={`${field}-col-${oi}`}
+                          value={opt.value === "" ? "" : String(opt.value)}
+                        >
+                          {opt.label}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+              );
+            })}
           </div>
           <div
             style={{
@@ -507,26 +644,41 @@ export default function App() {
       {previewRows.length > 0 ? (
         <div style={card}>
           <h2 style={{ margin: "0 0 12px", fontSize: 16 }}>
-            Preview (first {previewRows.length} rows)
+            Preview (first {previewRows.length} rows, {exportFieldList.length}{" "}
+            columns)
           </h2>
-          <div style={{ overflow: "auto" }}>
+          <div
+            style={{
+              overflowX: "auto",
+              overflowY: "auto",
+              maxHeight: 480,
+              width: "100%",
+              border: "1px solid #e2e8f0",
+              borderRadius: 8,
+            }}
+          >
             <table
               style={{
                 borderCollapse: "collapse",
                 fontSize: 12,
+                width: "max-content",
                 minWidth: "100%",
               }}
             >
               <thead>
                 <tr>
-                  {fieldList.slice(0, 12).map((f) => (
+                  {exportFieldList.map((f) => (
                     <th
                       key={f}
                       style={{
                         textAlign: "left",
-                        padding: "6px 8px",
-                        borderBottom: "1px solid #e2e8f0",
+                        padding: "6px 10px",
+                        borderBottom: "2px solid #e2e8f0",
                         whiteSpace: "nowrap",
+                        background: "#f8fafc",
+                        position: "sticky",
+                        top: 0,
+                        zIndex: 1,
                       }}
                     >
                       {f}
@@ -537,12 +689,13 @@ export default function App() {
               <tbody>
                 {previewRows.map((row, i) => (
                   <tr key={i}>
-                    {fieldList.slice(0, 12).map((f) => (
+                    {exportFieldList.map((f) => (
                       <td
                         key={f}
                         style={{
-                          padding: "6px 8px",
+                          padding: "6px 10px",
                           borderBottom: "1px solid #f1f5f9",
+                          whiteSpace: "nowrap",
                         }}
                       >
                         {row[f]}

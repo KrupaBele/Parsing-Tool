@@ -1,6 +1,6 @@
 import {
   buildSynonymToField,
-  fieldsForTarget,
+  mappingFieldsForTarget,
   normalizeHeader,
   SYNONYMS,
   TARGET_TYPES,
@@ -61,7 +61,7 @@ function dayColumnScore(rawDisplay, backendField) {
  * @returns {Record<string, number | ''>} backendField -> source column index or ''
  */
 export function autoMapColumns(sourceHeaders, targetType) {
-  const fields = fieldsForTarget(targetType);
+  const fields = mappingFieldsForTarget(targetType);
   const synonymExact = buildSynonymToField(targetType);
 
   /** @type {{ field: string, phrases: string[] }[]} */

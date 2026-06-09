@@ -249,7 +249,9 @@ export const SYNONYMS = {
     bankAccountNumber: ['bankaccountnumber', 'account number', 'bank ac no', 'bankacno', 'acct no'],
     bankIfsc: ['bankifsc', 'ifsc', 'ifsc code', 'ifsccode'],
     designation: ['designation', 'job title', 'title'],
-    department: ['department', 'dept', 'location'],
+    department: ['department', 'dept'],
+    /** Mapped from Excel only — used for branch allocation, not exported to CSV */
+    location: ['location', 'work location', 'office location', 'site', 'workplace', 'place'],
     dateOfJoining: ['dateofjoining', 'date of joining', 'doj', 'joining date'],
     nationality: ['nationality'],
     annualCTC: ['annualctc', 'annual ctc', 'ctc'],
@@ -382,6 +384,17 @@ export function fieldsForTarget(targetType) {
   return ATTENDANCE_CSV_FIELDS;
 }
 
+/** Column mapping keys (includes allocation-only fields not in CSV export). */
+export function mappingFieldsForTarget(targetType) {
+  if (targetType !== TARGET_TYPES.employee) return fieldsForTarget(targetType);
+  const fields = [...EMPLOYEE_CSV_FIELDS];
+  const stateIdx = fields.indexOf('state');
+  if (!fields.includes('location')) {
+    fields.splice(stateIdx >= 0 ? stateIdx + 1 : fields.length, 0, 'location');
+  }
+  return fields;
+}
+
 /**
  * @param {string} targetType
  * @returns {Record<string, string>} normalized synonym -> backend key
@@ -398,6 +411,81 @@ export function buildSynonymToField(targetType) {
   return map;
 }
 
+/** @param {string[]} norm */
+function hasPayableDaysHeader(norm) {
+  return norm.some(
+    (n) =>
+      (n.includes('payable') && n.includes('day')) ||
+      n.includes('pay day') ||
+      n.includes('paid day') ||
+      n === 'pay days' ||
+      n === 'paid days' ||
+      n.includes('no of payable days'),
+  );
+}
+
+/** Onboarding-only — rarely the main purpose of a monthly pay sheet */
+function scoreEmployeeMaster(norm) {
+  let strong = 0;
+  const has = (fn) => norm.some(fn);
+
+  if (has((n) => n.includes('date of joining') || n === 'doj' || n.includes('joining date')))
+    strong += 10;
+  if (has((n) => n.includes('date of birth') || n === 'dob' || n.includes('birth date')))
+    strong += 8;
+  if (has((n) => n.includes('ifsc'))) strong += 8;
+  if (has((n) => n.includes('designation') || n.includes('job title'))) strong += 6;
+  if (has((n) => n.includes('father') && n.includes('name'))) strong += 6;
+  if (has((n) => n.includes('present address') || n === 'address')) strong += 5;
+  if (has((n) => n.includes('annual') && n.includes('ctc'))) strong += 6;
+  if (has((n) => n.includes('bank name') || n.includes('bank account'))) strong += 4;
+  if (has((n) => n.includes('pf number') || n === 'pf no')) strong += 4;
+  if (has((n) => n === 'state' || n === 'location' || n.includes('work location'))) strong += 3;
+  if (has((n) => n.includes('nationality') || n.includes('education'))) strong += 3;
+
+  // Weak — common on payslips too; low weight
+  let weak = 0;
+  if (has((n) => n.includes('aadhaar') || n.includes('aadhar'))) weak += 2;
+  if (has((n) => n.includes('uan'))) weak += 1;
+  if (has((n) => n.includes('pan'))) weak += 1;
+  if (has((n) => n === 'gender' || n === 'sex')) weak += 1;
+
+  return { strong, weak, total: strong + weak };
+}
+
+/** Monthly payroll-run columns */
+function scorePayRegister(norm) {
+  let strong = 0;
+  const has = (fn) => norm.some(fn);
+
+  if (has((n) => n.includes('net pay') || n.includes('net salary') || n.includes('take home')))
+    strong += 10;
+  if (has((n) => n.includes('gross payable') || n.includes('gross pay'))) strong += 9;
+  if (hasPayableDaysHeader(norm)) strong += 8;
+  if (has((n) => n.includes('no of days worked') || n.includes('days worked'))) strong += 7;
+  if (has((n) => n.includes('date of payment') || n.includes('pay date'))) strong += 7;
+  if (has((n) => n === 'fnf' || n.includes('full and final'))) strong += 8;
+  if (has((n) => n === 'tds')) strong += 6;
+  if (has((n) => n.includes('arrear'))) strong += 6;
+  if (has((n) => n.includes('total deduction'))) strong += 6;
+  if (has((n) => n.includes('ot wages') || n.includes('overtime'))) strong += 4;
+  if (has((n) => n.includes('advance paid') || n.includes('advance recovered'))) strong += 4;
+  if (has((n) => n.includes('leave wages') || n.includes('leave encashment'))) strong += 4;
+
+  let medium = 0;
+  const grossish = has((n) => n.includes('gross'));
+  const basicish = has((n) => n.includes('basic'));
+  if (grossish && basicish) medium += 5;
+  if (has((n) => n === 'pf' || n.includes('provident fund') || n.includes('employee pf')))
+    medium += 2;
+  if (has((n) => n === 'esi' || n.includes('esic') || n.includes('employee esi'))) medium += 2;
+  if (has((n) => n === 'pt' || n.includes('professional tax') || n === 'p tax')) medium += 2;
+  if (has((n) => n.includes('deduction'))) medium += 2;
+  if (has((n) => n === 'lwf')) medium += 2;
+
+  return { strong, medium, total: strong + medium };
+}
+
 /**
  * Guess target from raw headers (normalized tokens).
  * @param {string[]} rawHeaders
@@ -407,39 +495,41 @@ export function guessTargetFromHeaders(rawHeaders) {
   const set = new Set(norm);
 
   const hasDayNumbers =
-    ['1', '2', '3', '4', '5'].every(d => set.has(d)) ||
-    norm.some(h => /^day\s*\d+$/.test(h));
+    ['1', '2', '3', '4', '5'].every((d) => set.has(d)) ||
+    norm.some((h) => /^day\s*\d+$/.test(h));
 
-  const grossish = norm.some(n => n.includes('gross'));
-  const basicish = norm.some(n => n.includes('basic'));
-  const payableDaysish = norm.some(n => n.includes('payable') && n.includes('day'));
+  const grossish = norm.some((n) => n.includes('gross'));
+  const basicish = norm.some((n) => n.includes('basic'));
 
-  const employeeHints =
-    norm.some(n => n.includes('annual') && n.includes('ctc')) ||
-    norm.some(n => n.includes('aadhaar') || n.includes('aadhar')) ||
-    norm.some(n => n.includes('ifsc')) ||
-    norm.some(n => n.includes('employee') && n.includes('code')) ||
-    norm.some(n => n.includes('date of joining') && n.includes('dd/mm'));
-
-  /** Leave-style registers use day columns 1–31; payroll sheets rarely use those headers together with salary bands. */
   if (hasDayNumbers && !(grossish && basicish)) {
     return TARGET_TYPES.attendance;
   }
 
-  if ((grossish && basicish) || (payableDaysish && basicish) || payHintsCount(norm) >= 3) {
+  const emp = scoreEmployeeMaster(norm);
+  const pay = scorePayRegister(norm);
+
+  const hasOnboarding =
+    norm.some((n) => n.includes('date of joining') || n === 'doj' || n.includes('joining date')) ||
+    norm.some((n) => n.includes('date of birth') || n === 'dob') ||
+    norm.some((n) => n.includes('ifsc'));
+
+  // Monthly pay sheet: 2+ payroll-run headers, or gross+basic+deduction without onboarding
+  if (
+    pay.strong >= 2 ||
+    (pay.strong >= 1 && grossish && basicish) ||
+    (grossish && basicish && pay.medium >= 4 && !hasOnboarding)
+  ) {
     return TARGET_TYPES.payRegister;
   }
-  if (employeeHints) {
+
+  // Employee master: onboarding / identity fields
+  if (emp.strong >= 2 || hasOnboarding) {
     return TARGET_TYPES.employee;
   }
-  if (basicish && norm.some(n => n.includes('employee') && (n.includes('id') || n.includes('code')))) {
-    return TARGET_TYPES.payRegister;
-  }
-  return TARGET_TYPES.employee;
-}
 
-/** @param {string[]} norm */
-function payHintsCount(norm) {
-  const keys = ['gross', 'basic', 'payable', 'provident', 'deduction', 'allowance', 'net pay', 'tds', 'esi'];
-  return keys.reduce((n, k) => n + (norm.some(h => h.includes(k)) ? 1 : 0), 0);
+  if (pay.strong > emp.strong) return TARGET_TYPES.payRegister;
+  if (emp.strong > pay.strong) return TARGET_TYPES.employee;
+  if (pay.total > emp.total && pay.total >= 4) return TARGET_TYPES.payRegister;
+
+  return TARGET_TYPES.employee;
 }
