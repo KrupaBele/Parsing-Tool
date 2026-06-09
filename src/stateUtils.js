@@ -71,6 +71,7 @@ const ALIASES = {
   uk: "uttarakhand",
   hp: "himachal pradesh",
   ga: "goa",
+  gujrat: "gujarat",
 };
 
 /** @param {string} raw */
@@ -90,10 +91,58 @@ export function normalizeStateKey(raw) {
   return s;
 }
 
-/** @param {string} key normalized state key */
+/**
+ * Allocation key — keeps composite values like "gujarat-bellandur" separate
+ * so multiple branches in one state can map differently per Excel row group.
+ * @param {string} raw
+ */
+export function normalizeAllocationKey(raw) {
+  const s = String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  if (!s) return "";
+
+  if (/[-_/|]/.test(s)) {
+    const parts = s.split(/[-_/|]/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const baseState = normalizeStateKey(parts[0]);
+      if (isKnownStateKey(baseState)) {
+        const suffix = parts
+          .slice(1)
+          .join("-")
+          .replace(/\s+/g, "-");
+        return `${baseState}-${suffix}`;
+      }
+    }
+  }
+
+  return normalizeStateKey(s);
+}
+
+/** Base Indian state from an allocation key (e.g. gujarat-bellandur → gujarat). */
+export function baseStateFromAllocationKey(key) {
+  if (!key) return "";
+  if (isKnownStateKey(key)) return key;
+  const dash = key.indexOf("-");
+  if (dash > 0) {
+    const base = key.slice(0, dash);
+    if (isKnownStateKey(base)) return base;
+  }
+  return normalizeStateKey(key);
+}
+
+/** @param {string} key allocation key */
 export function stateDisplayLabel(key) {
   if (!key) return "";
-  return key.replace(/\b\w/g, (c) => c.toUpperCase());
+  const base = baseStateFromAllocationKey(key);
+  if (key === base || isKnownStateKey(key)) {
+    return key.replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  const suffix = key.slice(base.length + 1);
+  const stateLabel = base.replace(/\b\w/g, (c) => c.toUpperCase());
+  const locLabel = suffix.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return `${stateLabel} — ${locLabel}`;
 }
 
 /** @param {string} key */

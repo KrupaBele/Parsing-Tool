@@ -1,21 +1,29 @@
 import { cellToString } from "./excelUtils.js";
 import {
+  baseStateFromAllocationKey,
   extractStateFromAddress,
   isKnownStateKey,
+  normalizeAllocationKey,
   normalizeStateKey,
 } from "./stateUtils.js";
 
 /**
- * State for allocation: mapped `state` column, else parsed from `location`.
+ * State/location key for allocation: supports composite values like gujarat-bellandur.
  * @param {Record<string, string>} row
  */
 export function resolveRowStateKey(row) {
   const stateVal = (row.state || "").trim();
   if (stateVal) {
-    const key = normalizeStateKey(stateVal);
-    if (isKnownStateKey(key)) return key;
+    const key = normalizeAllocationKey(stateVal);
+    if (key) return key;
   }
-  return extractStateFromAddress(row.location || "");
+  const loc = (row.location || "").trim();
+  if (loc) {
+    const fromLoc = normalizeAllocationKey(loc);
+    if (fromLoc) return fromLoc;
+    return extractStateFromAddress(loc);
+  }
+  return "";
 }
 
 /**
@@ -27,14 +35,16 @@ function resolveGridRowStateKey(line, mapping) {
   if (stateCol !== "" && stateCol != null) {
     const s = cellToString(line[stateCol]);
     if (s) {
-      const key = normalizeStateKey(s);
-      if (isKnownStateKey(key)) return key;
-      // Unrecognized state text — fall through to location
+      const key = normalizeAllocationKey(s);
+      if (key) return key;
     }
   }
   const locCol = mapping.location;
   if (locCol !== "" && locCol != null) {
-    return extractStateFromAddress(cellToString(line[locCol]));
+    const loc = cellToString(line[locCol]);
+    const fromLoc = normalizeAllocationKey(loc);
+    if (fromLoc) return fromLoc;
+    return extractStateFromAddress(loc);
   }
   return "";
 }
@@ -96,14 +106,44 @@ export function extractStateCountsFromGrid(grid, headerRowIndex, mapping) {
 }
 
 /**
- * Branches whose branchState matches the given normalized state key.
- * @param {{ branchCode: string, branchName?: string, branchState?: string }[]} branches
- * @param {string} stateKey
+ * Branches in the base state for an allocation key (incl. gujarat-bellandur → gujarat).
+ * @param {{ branchCode: string, branchName?: string, branchState?: string, branchLocation?: string }[]} branches
+ * @param {string} allocationKey
  */
-export function branchesForState(branches, stateKey) {
+export function branchesForAllocationKey(branches, allocationKey) {
+  const base = baseStateFromAllocationKey(allocationKey);
+  if (!base) return [];
   return branches.filter(
-    (b) => normalizeStateKey(b.branchState || "") === stateKey && b.branchCode,
+    (b) => normalizeStateKey(b.branchState || "") === base && b.branchCode,
   );
+}
+
+/**
+ * @param {{ branchCode: string, branchName?: string, branchState?: string, branchLocation?: string }[]} branches
+ * @param {string} allocationKey
+ */
+function suggestBranchForAllocationKey(branches, allocationKey) {
+  const matches = branchesForAllocationKey(branches, allocationKey);
+  if (matches.length === 1) return matches[0].branchCode;
+
+  if (allocationKey.includes("-")) {
+    const hint = allocationKey
+      .slice(allocationKey.indexOf("-") + 1)
+      .toLowerCase()
+      .replace(/-/g, " ");
+    const byHint = matches.filter((b) => {
+      const name = (b.branchName || "").toLowerCase();
+      const loc = (b.branchLocation || "").toLowerCase();
+      return (
+        name.includes(hint) ||
+        hint.includes(name) ||
+        (loc && (loc.includes(hint) || hint.includes(loc)))
+      );
+    });
+    if (byHint.length === 1) return byHint[0].branchCode;
+  }
+
+  return "";
 }
 
 /**
@@ -124,8 +164,8 @@ export function suggestUnmappedStateBranchMap(
   ]);
   for (const state of states) {
     if (next[state]) continue;
-    const matches = branchesForState(branches, state);
-    if (matches.length === 1) next[state] = matches[0].branchCode;
+    const suggested = suggestBranchForAllocationKey(branches, state);
+    if (suggested) next[state] = suggested;
   }
   return next;
 }
@@ -142,7 +182,7 @@ export function suggestUnmappedStateBranchMap(
  * @returns {AllocationStatus}
  */
 export function allocationStatus(stateKey, employeeCount, branches, selectedBranchCode) {
-  const matches = branchesForState(branches, stateKey);
+  const matches = branchesForAllocationKey(branches, stateKey);
   if (selectedBranchCode) return "mapped";
   if (matches.length === 0) return employeeCount > 0 ? "no_branch" : "not_in_excel";
   if (matches.length > 1) return employeeCount > 0 ? "pick_branch" : "unmapped";
@@ -169,7 +209,7 @@ export function buildAllocationTableRows(
     .sort((a, b) => a.localeCompare(b))
     .map((stateKey) => {
       const employeeCount = excelStateCounts[stateKey] || 0;
-      const available = branchesForState(branches, stateKey);
+      const available = branchesForAllocationKey(branches, stateKey);
       const selected = stateBranchMap[stateKey] || "";
       return {
         stateKey,
