@@ -66,6 +66,8 @@ export default function App() {
     /** @type {Record<string, string>} */ ({}),
   );
   const [useStateAllocation, setUseStateAllocation] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [loadingMsg, setLoadingMsg] = useState("");
 
   const fieldList = useMemo(
     () => mappingFieldsForTarget(targetType),
@@ -147,8 +149,14 @@ export default function App() {
     setError("");
     setPreviewRows([]);
     if (!file) return;
+    setLoading(true);
+    setLoadingMsg("Reading file…");
+    // Yield to browser so the loading overlay renders before heavy work starts
+    await new Promise((resolve) => setTimeout(resolve, 60));
     try {
       const { workbook: wb, sheetNames: names } = await readWorkbook(file);
+      setLoadingMsg("Detecting headers…");
+      await new Promise((resolve) => setTimeout(resolve, 30));
       setWorkbook(wb);
       setFileName(file.name);
       setSheetNames(names);
@@ -165,9 +173,14 @@ export default function App() {
         String(h).startsWith("__empty_") ? "" : String(h),
       );
       const guessed = guessTargetFromHeaders(cleanHdrs);
+      setLoadingMsg("Mapping columns…");
+      await new Promise((resolve) => setTimeout(resolve, 30));
       reprocess(wb, first, hIdx, hdrs, guessed);
     } catch (err) {
       setError(err?.message || String(err));
+    } finally {
+      setLoading(false);
+      setLoadingMsg("");
     }
   };
 
@@ -321,6 +334,66 @@ export default function App() {
 
   return (
     <div style={wrap}>
+      {loading && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(15,23,42,0.45)",
+            backdropFilter: "blur(3px)",
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: 16,
+              padding: "36px 48px",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 20,
+              boxShadow: "0 8px 32px rgba(15,23,42,0.18)",
+              minWidth: 260,
+            }}
+          >
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                border: "5px solid #e2e8f0",
+                borderTopColor: "#0f766e",
+                borderRadius: "50%",
+                animation: "ssa-spin 0.85s linear infinite",
+              }}
+            />
+            <p
+              style={{
+                margin: 0,
+                fontWeight: 600,
+                fontSize: 15,
+                color: "#1e293b",
+              }}
+            >
+              Processing your file
+            </p>
+            {loadingMsg && (
+              <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>
+                {loadingMsg}
+              </p>
+            )}
+            <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>
+              Please wait — this may take a moment for large files
+            </p>
+          </div>
+          <style>{`@keyframes ssa-spin{to{transform:rotate(360deg)}}`}</style>
+        </div>
+      )}
+
       <header style={{ marginBottom: 24 }}>
         <h1 style={{ margin: "0 0 8px", fontSize: 22 }}>
           Excel → SSA Compliance CSV
@@ -358,7 +431,13 @@ export default function App() {
         <label style={{ fontWeight: 600, display: "block", marginBottom: 8 }}>
           Excel file
         </label>
-        <input type="file" accept=".xlsx,.xls" onChange={onFile} />
+        <input
+          type="file"
+          accept=".xlsx,.xls"
+          onChange={onFile}
+          disabled={loading}
+          style={{ cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.5 : 1 }}
+        />
         {fileName ? (
           <p style={{ margin: "12px 0 0", fontSize: 14, color: "#64748b" }}>
             Loaded: {fileName}
