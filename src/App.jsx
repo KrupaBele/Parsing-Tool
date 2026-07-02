@@ -68,6 +68,7 @@ export default function App() {
   const [useStateAllocation, setUseStateAllocation] = useState(true);
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");
+  
 
   const fieldList = useMemo(
     () => mappingFieldsForTarget(targetType),
