@@ -28,6 +28,106 @@ function ymdToDdMmYyyy(p) {
   return `${pad2(p.d)}-${pad2(p.m)}-${p.y}`;
 }
 
+const MONTH_NAME_TO_NUM = {
+  jan: 1, january: 1,
+  feb: 2, february: 2,
+  mar: 3, march: 3,
+  apr: 4, april: 4,
+  may: 5,
+  jun: 6, june: 6,
+  jul: 7, july: 7,
+  aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9,
+  oct: 10, october: 10,
+  nov: 11, november: 11,
+  dec: 12, december: 12,
+};
+
+/** Excel display text like "8-Dec-1997", "19-Jan-26". */
+function parseMonthNameDateToYmd(s) {
+  const t = String(s).trim();
+  const m = t.match(/^(\d{1,2})[-\s./]+([A-Za-z]{3,9})[-\s./]+(\d{2,4})$/);
+  if (!m) return null;
+  const day = Number(m[1]);
+  const month = MONTH_NAME_TO_NUM[m[2].toLowerCase()] ?? MONTH_NAME_TO_NUM[m[2].toLowerCase().slice(0, 3)];
+  let year = Number(m[3]);
+  if (!month || !Number.isFinite(day) || !Number.isFinite(year)) return null;
+  if (year < 100) year += year >= 50 ? 1900 : 2000;
+  if (day < 1 || day > 31) return null;
+  const chk = new Date(year, month - 1, day);
+  if (chk.getFullYear() !== year || chk.getMonth() !== month - 1 || chk.getDate() !== day) return null;
+  return { y: year, m: month, d: day };
+}
+
+/** Excel formatted display (cell.w) — not IDs like PAN. */
+function isDateLikeDisplayString(s) {
+  const t = String(s).trim();
+  if (!t) return false;
+  if (/^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}$/.test(t)) return true;
+  if (/^\d{1,2}[-\s./]+[A-Za-z]{3,9}[-\s./]+\d{2,4}$/.test(t)) return true;
+  return false;
+}
+
+function formatDateFieldValue(s) {
+  const dashed = parseDdMmYyyyTextToYmd(s);
+  if (dashed) return ymdToDdMmYyyy(dashed);
+  const monthName = parseMonthNameDateToYmd(s);
+  if (monthName) return ymdToDdMmYyyy(monthName);
+  const slash = parseSlashDateToYmd(s);
+  if (slash) return ymdToDdMmYyyy(slash);
+  return null;
+}
+
+/** Built-in Excel format ids that represent dates (not plain numbers). */
+const EXCEL_BUILT_IN_DATE_FORMAT_IDS = new Set([14, 15, 16, 17, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 45, 46, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58]);
+
+function isDateNumberFormat(z) {
+  if (z == null || z === 'General') return false;
+  if (typeof z === 'number' && EXCEL_BUILT_IN_DATE_FORMAT_IDS.has(z)) return true;
+  const s = String(z);
+  if (/^\d+$/.test(s) && EXCEL_BUILT_IN_DATE_FORMAT_IDS.has(Number(s))) return true;
+  return /[dmy]/i.test(s);
+}
+
+/** Excel cell display string when .w is missing (needs cellNF on read). */
+function cellDisplayText(cell) {
+  if (cell.w && typeof cell.w === 'string') return cell.w.trim();
+  if (cell.z != null && typeof cell.v === 'number' && XLSX.SSF?.format) {
+    try {
+      return String(XLSX.SSF.format(cell.z, cell.v)).trim();
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+function jsDateToLocalDdMmYyyy(v) {
+  const parseSerial = XLSX.SSF?.parse_date_code;
+  if (parseSerial) {
+    const serial = jsDateToExcelSerial(v, false);
+    const parsed = parseSerial(serial);
+    if (parsed?.y >= 1900 && parsed.y <= 2100 && parsed.m >= 1 && parsed.d >= 1) {
+      return ymdToDdMmYyyy({ d: parsed.d, m: parsed.m, y: parsed.y });
+    }
+  }
+  const utc = new Date(v.getTime() - v.getTimezoneOffset() * 60000);
+  return ymdToDdMmYyyy({
+    d: utc.getUTCDate(),
+    m: utc.getUTCMonth() + 1,
+    y: utc.getUTCFullYear(),
+  });
+}
+
+function serialToDdMmYyyy(serial) {
+  const parseSerial = XLSX.SSF?.parse_date_code;
+  if (!parseSerial || typeof serial !== 'number' || !Number.isFinite(serial)) return null;
+  const parsed = parseSerial(serial);
+  if (!parsed?.y || parsed.y < 1900 || parsed.y > 2100) return null;
+  if (parsed.m < 1 || parsed.m > 12 || parsed.d < 1 || parsed.d > 31) return null;
+  return ymdToDdMmYyyy({ d: parsed.d, m: parsed.m, y: parsed.y });
+}
+
 /**
  * Excel serial → calendar (1900 date system). Avoids JS Date timezone shifts.
  * @param {number} v
@@ -36,29 +136,51 @@ function ymdToDdMmYyyy(p) {
 function excelSerialToDdMmYyyyIfDateField(v, fieldKey) {
   if (!fieldKey || !DATE_CSV_FIELD_KEYS.has(fieldKey)) return null;
   if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v >= 1e9) return null;
-  const parseSerial = XLSX.SSF?.parse_date_code;
-  if (!parseSerial) return null;
-  const parsed = parseSerial(v);
-  if (!parsed || typeof parsed.y !== 'number') return null;
-  if (parsed.y < 1900 || parsed.y > 2100) return null;
-  if (parsed.m < 1 || parsed.m > 12 || parsed.d < 1 || parsed.d > 31) return null;
-  return ymdToDdMmYyyy({ d: parsed.d, m: parsed.m, y: parsed.y });
+  return serialToDdMmYyyy(v);
 }
 
 /**
- * Text as in many client sheets: month / day / year (e.g. "9/5/2000", "1/18/1993").
+ * Slash/dot dates from client sheets — DD/MM/YYYY (e.g. "13/10/1993") or US when month > 12.
  * @param {string} s
  * @returns {{ y: number; m: number; d: number } | null}
  */
-function parseUsMdYToYmd(s) {
+function parseSlashDateToYmd(s) {
   const t = String(s).trim();
   if (!t) return null;
   const m = t.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})\s*$/);
   if (!m) return null;
-  const month = Number(m[1]);
-  const day = Number(m[2]);
+  const a = Number(m[1]);
+  const b = Number(m[2]);
   let year = Number(m[3]);
   if (year < 100) year += year >= 50 ? 1900 : 2000;
+
+  let day;
+  let month;
+  if (a > 12 && b <= 12) {
+    day = a;
+    month = b;
+  } else if (b > 12 && a <= 12) {
+    month = a;
+    day = b;
+  } else {
+    day = a;
+    month = b;
+  }
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const chk = new Date(year, month - 1, day);
+  if (chk.getFullYear() !== year || chk.getMonth() !== month - 1 || chk.getDate() !== day) return null;
+  return { y: year, m: month, d: day };
+}
+
+/** Already dd-mm-yyyy (or d-m-yyyy) text — normalize padding. */
+function parseDdMmYyyyTextToYmd(s) {
+  const t = String(s).trim();
+  const m = t.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (!m) return null;
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  const year = Number(m[3]);
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   const chk = new Date(year, month - 1, day);
   if (chk.getFullYear() !== year || chk.getMonth() !== month - 1 || chk.getDate() !== day) return null;
@@ -72,38 +194,10 @@ function parseUsMdYToYmd(s) {
  */
 function dateToDdMmYyyy(v, fieldKey) {
   if (Number.isNaN(v.getTime())) return '';
-  const parseSerial = XLSX.SSF?.parse_date_code;
-  // `cellDates` + `numdate()` can yield a JS Date whose *local* wall clock is still the
-  // previous calendar day (e.g. IST) while the workbook serial is correct — round-trip
-  // through serial + `parse_date_code` matches Excel's calendar.
-  if (parseSerial && fieldKey && DATE_CSV_FIELD_KEYS.has(fieldKey)) {
-    const serial = jsDateToExcelSerial(v, false);
-    const parsed = parseSerial(serial);
-    if (parsed && typeof parsed.y === 'number' && parsed.y >= 1900 && parsed.y <= 2100) {
-      if (parsed.m >= 1 && parsed.m <= 12 && parsed.d >= 1 && parsed.d <= 31) {
-        return ymdToDdMmYyyy({ d: parsed.d, m: parsed.m, y: parsed.y });
-      }
-    }
+  if (fieldKey && DATE_CSV_FIELD_KEYS.has(fieldKey)) {
+    return jsDateToLocalDdMmYyyy(v);
   }
-  // Non–date-column cells (rare Date values): keep UTC-midnight vs local-noon heuristic.
-  const utcMidnight =
-    v.getUTCHours() === 0 &&
-    v.getUTCMinutes() === 0 &&
-    v.getUTCSeconds() === 0 &&
-    v.getUTCMilliseconds() === 0;
-  if (utcMidnight) {
-    return ymdToDdMmYyyy({
-      d: v.getUTCDate(),
-      m: v.getUTCMonth() + 1,
-      y: v.getUTCFullYear(),
-    });
-  }
-  const noon = new Date(v.getFullYear(), v.getMonth(), v.getDate(), 12, 0, 0);
-  return ymdToDdMmYyyy({
-    d: noon.getDate(),
-    m: noon.getMonth() + 1,
-    y: noon.getFullYear(),
-  });
+  return jsDateToLocalDdMmYyyy(v);
 }
 
 /**
@@ -112,7 +206,7 @@ function dateToDdMmYyyy(v, fieldKey) {
  */
 export async function readWorkbook(file) {
   const buf = await file.arrayBuffer();
-  const workbook = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: false, cellText: false });
+  const workbook = XLSX.read(buf, { type: 'array', cellDates: false, cellNF: true, cellText: false });
   return { workbook, sheetNames: workbook.SheetNames };
 }
 
@@ -123,9 +217,41 @@ export async function readWorkbook(file) {
  */
 export function sheetToGrid(workbook, sheetName) {
   const ws = workbook.Sheets[sheetName];
-  if (!ws) return [];
-  /** `raw: true` keeps full integer precision for Aadhaar / UAN; formatted strings often become `7.11E+11`. */
-  return XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+  if (!ws || !ws['!ref']) return [];
+
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const grid = [];
+
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const row = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      const cell = ws[addr];
+      if (!cell) {
+        row.push('');
+        continue;
+      }
+      const display = cellDisplayText(cell);
+      if (display && isDateLikeDisplayString(display)) {
+        row.push(display);
+        continue;
+      }
+      if (typeof cell.v === 'number' && isDateNumberFormat(cell.z)) {
+        const fromSerial = serialToDdMmYyyy(cell.v);
+        if (fromSerial) {
+          row.push(fromSerial);
+          continue;
+        }
+      }
+      if (cell.v instanceof Date && !Number.isNaN(cell.v.getTime())) {
+        row.push(jsDateToLocalDdMmYyyy(cell.v));
+        continue;
+      }
+      row.push(cell.v ?? '');
+    }
+    grid.push(row);
+  }
+  return grid;
 }
 
 /**
@@ -172,8 +298,8 @@ export function cellToString(v, fieldKey) {
     }
   }
   if (fieldKey && DATE_CSV_FIELD_KEYS.has(fieldKey)) {
-    const us = parseUsMdYToYmd(s);
-    if (us) return ymdToDdMmYyyy(us);
+    const formatted = formatDateFieldValue(s);
+    if (formatted) return formatted;
   }
   return s;
 }

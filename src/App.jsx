@@ -701,9 +701,8 @@ export default function App() {
               maxWidth: 560,
             }}
           >
-            ID columns (Aadhaar, UAN, PAN, bank account, etc.) are written as
-            Excel-safe text so opening in Excel keeps full digits. Bulk-upload
-            APIs strip the Excel wrapper automatically.
+            UAN is exported as plain digits (e.g. 101000000000). Aadhaar and bank
+            account use Excel-safe text so long numbers stay correct when opened in Excel.
           </p>
         </div>
       ) : null}
