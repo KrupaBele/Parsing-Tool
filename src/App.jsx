@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchBranches } from "./api.js";
+import { fetchBranches, fetchKeyMapping, saveKeyMapping } from "./api.js";
+import {
+  buildMappingWithSaved,
+  mappingToHeaderNames,
+} from "./applySavedMapping.js";
 import {
   applyStateBranchAllocation,
   attachLocationToRows,
@@ -16,7 +20,6 @@ import {
   normalizeHeader,
   TARGET_TYPES,
 } from "./backendSchema.js";
-import { autoMapColumns } from "./buildMapping.js";
 import { gridToBackendRows, rowsToCsvString } from "./csvExport.js";
 import { readWorkbook, sheetToGrid } from "./excelUtils.js";
 import { detectHeaderRow } from "./headerDetect.js";
@@ -68,7 +71,10 @@ export default function App() {
   const [useStateAllocation, setUseStateAllocation] = useState(true);
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");
-  
+  /** @type {[Record<string, string> | null, Function]} */
+  const [savedHeaderMapping, setSavedHeaderMapping] = useState(null);
+  const [savingMapping, setSavingMapping] = useState(false);
+  const [mappingSaveMsg, setMappingSaveMsg] = useState("");
 
   const fieldList = useMemo(
     () => mappingFieldsForTarget(targetType),
@@ -119,6 +125,47 @@ export default function App() {
   }, [selectedCompanyId]);
 
   useEffect(() => {
+    if (!selectedCompanyId) {
+      setSavedHeaderMapping(null);
+      setMappingSaveMsg("");
+      return;
+    }
+    let cancelled = false;
+    setMappingSaveMsg("");
+    fetchKeyMapping(selectedCompanyId, targetType)
+      .then((result) => {
+        if (cancelled) return;
+        if (result?.mapping) {
+          setSavedHeaderMapping(result.mapping);
+          if (
+            result.stateBranchMap &&
+            Object.keys(result.stateBranchMap).length > 0
+          ) {
+            setStateBranchMap((prev) => ({
+              ...prev,
+              ...result.stateBranchMap,
+            }));
+          }
+          setMappingSaveMsg(
+            `Loaded saved mapping for this client (${Object.keys(result.mapping).filter((k) => result.mapping[k]).length} fields).`,
+          );
+        } else {
+          setSavedHeaderMapping(null);
+          setMappingSaveMsg("No saved mapping for this client yet.");
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSavedHeaderMapping(null);
+          setError(err?.message || String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCompanyId, targetType]);
+
+  useEffect(() => {
     if (!branches.length) return;
     setStateBranchMap((prev) =>
       suggestUnmappedStateBranchMap(branches, excelStateCounts, prev),
@@ -129,21 +176,37 @@ export default function App() {
     /** @type {import('xlsx').WorkBook | null} */ (null),
   );
 
-  const reprocess = useCallback((wb, sheet, hdrIdx, hdrs, tgt) => {
-    const g = sheetToGrid(wb, sheet);
-    setGrid(g);
-    setHeaderRowIndex(hdrIdx);
-    setHeaders(hdrs);
-    const cleanHdrs = hdrs.map((h) =>
+  const reprocess = useCallback(
+    (wb, sheet, hdrIdx, hdrs, tgt, savedMap) => {
+      const g = sheetToGrid(wb, sheet);
+      setGrid(g);
+      setHeaderRowIndex(hdrIdx);
+      setHeaders(hdrs);
+      const cleanHdrs = hdrs.map((h) =>
+        String(h).startsWith("__empty_") ? "" : String(h),
+      );
+      const guessed = guessTargetFromHeaders(cleanHdrs);
+      const useTarget = tgt || guessed;
+      setTargetType(useTarget);
+      const m = buildMappingWithSaved(
+        cleanHdrs,
+        useTarget,
+        savedMap !== undefined ? savedMap : savedHeaderMapping,
+      );
+      setMapping(m);
+    },
+    [savedHeaderMapping],
+  );
+
+  // Re-apply when a saved mapping arrives after the file is already loaded
+  useEffect(() => {
+    if (!headers.length) return;
+    const cleanHdrs = headers.map((h) =>
       String(h).startsWith("__empty_") ? "" : String(h),
     );
-    const guessed = guessTargetFromHeaders(cleanHdrs);
-    const useTarget = tgt || guessed;
-    setTargetType(useTarget);
-    const m = autoMapColumns(cleanHdrs, useTarget);
-    if (useTarget !== TARGET_TYPES.employee) m.branchcode = "";
-    setMapping(m);
-  }, []);
+    setMapping(buildMappingWithSaved(cleanHdrs, targetType, savedHeaderMapping));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when saved mapping identity changes
+  }, [savedHeaderMapping]);
 
   const onFile = async (e) => {
     const file = e.target.files?.[0];
@@ -214,8 +277,7 @@ export default function App() {
     const cleanHdrs = hdrs.map((h) =>
       String(h).startsWith("__empty_") ? "" : String(h),
     );
-    const m = autoMapColumns(cleanHdrs, targetType);
-    setMapping(m);
+    setMapping(buildMappingWithSaved(cleanHdrs, targetType, savedHeaderMapping));
     setPreviewRows([]);
   };
 
@@ -224,10 +286,40 @@ export default function App() {
     const cleanHdrs = headers.map((h) =>
       String(h).startsWith("__empty_") ? "" : String(h),
     );
-    const m = autoMapColumns(cleanHdrs, t);
-    if (t !== TARGET_TYPES.employee) m.branchcode = "";
-    setMapping(m);
+    // Saved mapping for the new type loads via effect; auto-map until then
+    setMapping(buildMappingWithSaved(cleanHdrs, t, null));
     setPreviewRows([]);
+  };
+
+  const onSaveMapping = async () => {
+    if (!selectedCompanyId) {
+      setError("Select a legal entity before saving the column mapping.");
+      return;
+    }
+    if (!headers.length) {
+      setError("Upload an Excel file and map columns before saving.");
+      return;
+    }
+    setSavingMapping(true);
+    setError("");
+    setMappingSaveMsg("");
+    try {
+      const headerMapping = mappingToHeaderNames(mapping, headers);
+      const result = await saveKeyMapping({
+        companyId: selectedCompanyId,
+        targetType,
+        mapping: headerMapping,
+        stateBranchMap: isEmployeeExport ? stateBranchMap : {},
+      });
+      setSavedHeaderMapping(result?.mapping || headerMapping);
+      setMappingSaveMsg(
+        `Mapping saved for ${selectedCompanyName || "this client"} (${TARGET_LABELS[targetType]}).`,
+      );
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setSavingMapping(false);
+    }
   };
 
   const isEmployeeExport = targetType === TARGET_TYPES.employee;
@@ -594,6 +686,23 @@ export default function App() {
               .join(", ")}
             …)
           </p>
+          {mappingSaveMsg ? (
+            <p
+              style={{
+                margin: "0 0 12px",
+                fontSize: 13,
+                color: selectedCompanyId ? "#0f766e" : "#64748b",
+              }}
+            >
+              {mappingSaveMsg}
+            </p>
+          ) : null}
+          {!selectedCompanyId ? (
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: "#b45309" }}>
+              Select a legal entity above to load/save column mappings for that
+              client.
+            </p>
+          ) : null}
           <div
             style={{
               display: "grid",
@@ -664,6 +773,7 @@ export default function App() {
               display: "flex",
               gap: 12,
               flexWrap: "wrap",
+              alignItems: "center",
             }}
           >
             <button
@@ -692,6 +802,27 @@ export default function App() {
             >
               Download CSV
             </button>
+            <button
+              type="button"
+              onClick={onSaveMapping}
+              disabled={!selectedCompanyId || savingMapping}
+              style={{
+                padding: "10px 18px",
+                cursor:
+                  !selectedCompanyId || savingMapping
+                    ? "not-allowed"
+                    : "pointer",
+                fontWeight: 600,
+                background:
+                  !selectedCompanyId || savingMapping ? "#94a3b8" : "#1e293b",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                opacity: !selectedCompanyId || savingMapping ? 0.7 : 1,
+              }}
+            >
+              {savingMapping ? "Saving…" : "Save mapping for client"}
+            </button>
           </div>
           <p
             style={{
@@ -702,7 +833,9 @@ export default function App() {
             }}
           >
             UAN is exported as plain digits (e.g. 101000000000). Aadhaar and bank
-            account use Excel-safe text so long numbers stay correct when opened in Excel.
+            account use Excel-safe text so long numbers stay correct when opened
+            in Excel. Saved mappings store Excel header names per client and
+            template, so the next file for this client is pre-mapped.
           </p>
         </div>
       ) : null}
