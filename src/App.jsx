@@ -817,19 +817,6 @@ export default function App() {
               {savingMapping ? "Saving…" : "Save mapping for client"}
             </button>
           </div>
-          <p
-            style={{
-              margin: "12px 0 0",
-              fontSize: 12,
-              color: "#64748b",
-              maxWidth: 560,
-            }}
-          >
-            UAN is exported as plain digits (e.g. 101000000000). Aadhaar and
-            bank account use Excel-safe text so long numbers stay correct when
-            opened in Excel. Saved mappings store Excel header names per client
-            and template, so the next file for this client is pre-mapped.
-          </p>
         </div>
       ) : null}
 
