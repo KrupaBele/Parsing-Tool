@@ -204,7 +204,9 @@ export default function App() {
     const cleanHdrs = headers.map((h) =>
       String(h).startsWith("__empty_") ? "" : String(h),
     );
-    setMapping(buildMappingWithSaved(cleanHdrs, targetType, savedHeaderMapping));
+    setMapping(
+      buildMappingWithSaved(cleanHdrs, targetType, savedHeaderMapping),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only when saved mapping identity changes
   }, [savedHeaderMapping]);
 
@@ -277,7 +279,9 @@ export default function App() {
     const cleanHdrs = hdrs.map((h) =>
       String(h).startsWith("__empty_") ? "" : String(h),
     );
-    setMapping(buildMappingWithSaved(cleanHdrs, targetType, savedHeaderMapping));
+    setMapping(
+      buildMappingWithSaved(cleanHdrs, targetType, savedHeaderMapping),
+    );
     setPreviewRows([]);
   };
 
@@ -328,12 +332,7 @@ export default function App() {
     let rows = gridToBackendRows(grid, headerRowIndex, mapping, targetType);
 
     if (isEmployeeExport) {
-      let allocRows = attachLocationToRows(
-        rows,
-        grid,
-        headerRowIndex,
-        mapping,
-      );
+      let allocRows = attachLocationToRows(rows, grid, headerRowIndex, mapping);
       if (useStateAllocation && Object.keys(stateBranchMap).length) {
         allocRows = applyStateBranchAllocation(allocRows, stateBranchMap);
       }
@@ -529,7 +528,10 @@ export default function App() {
           accept=".xlsx,.xls"
           onChange={onFile}
           disabled={loading}
-          style={{ cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.5 : 1 }}
+          style={{
+            cursor: loading ? "not-allowed" : "pointer",
+            opacity: loading ? 0.5 : 1,
+          }}
         />
         {fileName ? (
           <p style={{ margin: "12px 0 0", fontSize: 14, color: "#64748b" }}>
@@ -677,15 +679,6 @@ export default function App() {
       {headers.length > 0 ? (
         <div style={card}>
           <h2 style={{ margin: "0 0 12px", fontSize: 16 }}>Column mapping</h2>
-          <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>
-            Detected headers (normalized:{" "}
-            {headers
-              .filter((h) => !h.startsWith("__empty_"))
-              .map(normalizeHeader)
-              .slice(0, 8)
-              .join(", ")}
-            …)
-          </p>
           {mappingSaveMsg ? (
             <p
               style={{
@@ -832,10 +825,10 @@ export default function App() {
               maxWidth: 560,
             }}
           >
-            UAN is exported as plain digits (e.g. 101000000000). Aadhaar and bank
-            account use Excel-safe text so long numbers stay correct when opened
-            in Excel. Saved mappings store Excel header names per client and
-            template, so the next file for this client is pre-mapped.
+            UAN is exported as plain digits (e.g. 101000000000). Aadhaar and
+            bank account use Excel-safe text so long numbers stay correct when
+            opened in Excel. Saved mappings store Excel header names per client
+            and template, so the next file for this client is pre-mapped.
           </p>
         </div>
       ) : null}
