@@ -1,6 +1,7 @@
 import { cellToString } from './excelUtils.js';
 import {
   DATE_CSV_FIELD_KEYS,
+  PAY_AMOUNT_CSV_FIELDS,
   fieldsForTarget,
 } from './backendSchema.js';
 
@@ -44,6 +45,20 @@ const ID_NUMERIC_COERCE_FIELDS = new Set([...EXCEL_FORCE_TEXT_FIELDS, ...PLAIN_T
 /** Placeholder used by backend uploads — keep as plain cell, not a formula. */
 function isBackendPlaceholder(s) {
   return s === '-' || s === '';
+}
+
+/**
+ * Strip Indian/thousand commas from pay amount text (e.g. "8,12,013.83" → "812013.83").
+ * Leaves placeholders and non-numeric strings unchanged.
+ * @param {string} s
+ */
+function stripAmountCommas(s) {
+  const t = String(s).trim();
+  if (!t || t === '-') return t;
+  if (!/,/.test(t)) return t;
+  const cleaned = t.replace(/,/g, '');
+  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return t;
+  return cleaned;
 }
 
 /**
@@ -158,7 +173,11 @@ export function gridToBackendRows(grid, headerRowIndex, mapping, targetType) {
         continue;
       }
       const raw = line[col];
-      obj[f] = cellToString(raw, f);
+      let value = cellToString(raw, f);
+      if (PAY_AMOUNT_CSV_FIELDS.has(f)) {
+        value = stripAmountCommas(value);
+      }
+      obj[f] = value;
       if (obj[f] !== '') anyMapped = true;
     }
     if (anyMapped) rows.push(obj);
