@@ -14,7 +14,7 @@ export async function searchClients(name = '') {
 
 /**
  * @param {string} companyId
- * @returns {Promise<{ _id: string, branchCode: string, branchName: string, branchState: string }[]>}
+ * @returns {Promise<{ _id: string, branchCode: string, branchName: string, branchState: string, branchArea: string }[]>}
  */
 export async function fetchBranches(companyId) {
   const url = `${API_URL}/client/branches?companyId=${encodeURIComponent(companyId)}`;

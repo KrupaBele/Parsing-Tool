@@ -5,14 +5,25 @@ import {
 import { stateDisplayLabel } from "./stateUtils.js";
 
 /**
+ * @param {{ branchCode?: string, branchName?: string, branchArea?: string }} b
+ */
+function branchOptionLabel(b) {
+  const parts = [b.branchCode || ""];
+  if (b.branchName) parts.push(b.branchName);
+  const area = (b.branchArea || "").trim();
+  if (area && area !== "-") parts.push(area);
+  return parts.join(" — ");
+}
+
+/**
  * @param {{
- *   branches: { branchCode: string, branchName?: string, branchState?: string }[],
+ *   branches: { branchCode: string, branchName?: string, branchState?: string, branchArea?: string }[],
  *   excelStateCounts: Record<string, number>,
  *   stateBranchMap: Record<string, string>,
  *   useStateAllocation: boolean,
  *   onUseStateAllocationChange: (v: boolean) => void,
  *   onStateBranchMapChange: (map: Record<string, string>) => void,
- *   allBranches: { branchCode: string, branchName?: string }[],
+ *   allBranches: { branchCode: string, branchName?: string, branchArea?: string }[],
  * }} props
  */
 export default function StateBranchAllocationPanel({
@@ -139,7 +150,7 @@ export default function StateBranchAllocationPanel({
                     style={{
                       padding: "8px 10px",
                       borderBottom: "1px solid #f1f5f9",
-                      minWidth: 200,
+                      minWidth: 260,
                     }}
                   >
                     <select
@@ -167,8 +178,7 @@ export default function StateBranchAllocationPanel({
                       <option value="">—</option>
                       {options.map((b) => (
                         <option key={b.branchCode} value={b.branchCode}>
-                          {b.branchCode}
-                          {b.branchName ? ` — ${b.branchName}` : ""}
+                          {branchOptionLabel(b)}
                         </option>
                       ))}
                     </select>

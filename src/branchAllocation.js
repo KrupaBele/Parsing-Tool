@@ -249,10 +249,10 @@ export function suggestStateBranchMap(branches) {  /** @type {Record<string, str
 
 /**
  * Group branches by normalized state for display.
- * @param {{ branchCode: string, branchName?: string, branchState?: string }[]} branches
+ * @param {{ branchCode: string, branchName?: string, branchState?: string, branchArea?: string }[]} branches
  */
 export function groupBranchesByState(branches) {
-  /** @type {Record<string, { branchCode: string, branchName: string }[]>} */
+  /** @type {Record<string, { branchCode: string, branchName: string, branchArea: string }[]>} */
   const groups = {};
   for (const b of branches) {
     const key = normalizeStateKey(b.branchState || "") || "(no state)";
@@ -260,6 +260,7 @@ export function groupBranchesByState(branches) {
     groups[key].push({
       branchCode: b.branchCode || "",
       branchName: b.branchName || "",
+      branchArea: b.branchArea || "",
     });
   }
   return groups;

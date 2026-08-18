@@ -63,7 +63,7 @@ export default function App() {
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [selectedCompanyName, setSelectedCompanyName] = useState("");
   const [branches, setBranches] = useState(
-    /** @type {{ _id: string, branchCode: string, branchName: string, branchState: string }[]} */ ([]),
+    /** @type {{ _id: string, branchCode: string, branchName: string, branchState: string, branchArea: string }[]} */ ([]),
   );
   const [stateBranchMap, setStateBranchMap] = useState(
     /** @type {Record<string, string>} */ ({}),
@@ -95,6 +95,7 @@ export default function App() {
       branches.map((b) => ({
         branchCode: b.branchCode || "",
         branchName: b.branchName || "",
+        branchArea: b.branchArea || "",
       })),
     [branches],
   );
