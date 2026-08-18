@@ -86,7 +86,50 @@ function isDateNumberFormat(z) {
   if (typeof z === 'number' && EXCEL_BUILT_IN_DATE_FORMAT_IDS.has(z)) return true;
   const s = String(z);
   if (/^\d+$/.test(s) && EXCEL_BUILT_IN_DATE_FORMAT_IDS.has(Number(s))) return true;
-  return /[dmy]/i.test(s);
+  const cleaned = s.replace(/"[^"]*"/g, '').replace(/\[[^\]]*\]/g, '');
+  // h:mm uses "m" for minutes — not a calendar date.
+  if (/[hs]/i.test(cleaned) && !/[dy]/i.test(cleaned)) return false;
+  return /d/i.test(cleaned) && /[my]/i.test(cleaned);
+}
+
+/** Excel nf like mm-dd-yy — display is month-first, not Indian dd-mm-yyyy. */
+function excelFormatIsMonthFirst(z) {
+  if (z == null || z === 'General') return false;
+  const s = String(z)
+    .replace(/"[^"]*"/g, '')
+    .replace(/\[[^\]]*\]/g, '')
+    .toLowerCase();
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === 'm' || s[i] === 'd') return s[i] === 'm';
+  }
+  return false;
+}
+
+/**
+ * Slash/dot dates stored as MM/DD/YYYY (Excel US display).
+ * @param {string} s
+ * @returns {{ y: number; m: number; d: number } | null}
+ */
+function parseMonthFirstSlashDateToYmd(s) {
+  const t = String(s).trim();
+  const m = t.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})\s*$/);
+  if (!m) return null;
+  const month = Number(m[1]);
+  const day = Number(m[2]);
+  let year = Number(m[3]);
+  if (year < 100) year += year >= 50 ? 1900 : 2000;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const chk = new Date(year, month - 1, day);
+  if (chk.getFullYear() !== year || chk.getMonth() !== month - 1 || chk.getDate() !== day) return null;
+  return { y: year, m: month, d: day };
+}
+
+function formatDisplayDateToDdMmYyyy(s, z) {
+  if (excelFormatIsMonthFirst(z)) {
+    const us = parseMonthFirstSlashDateToYmd(s);
+    if (us) return ymdToDdMmYyyy(us);
+  }
+  return formatDateFieldValue(s);
 }
 
 /** Excel cell display string when .w is missing (needs cellNF on read). */
@@ -231,11 +274,9 @@ export function sheetToGrid(workbook, sheetName) {
         row.push('');
         continue;
       }
-      const display = cellDisplayText(cell);
-      if (display && isDateLikeDisplayString(display)) {
-        row.push(display);
-        continue;
-      }
+      // Prefer the Excel serial/Date over cell.w. Display often follows the
+      // workbook format (e.g. mm-dd-yy → "06-01-26" for 1 Jun 2026), which
+      // looks like Indian dd-mm-yyyy and gets day/month swapped.
       if (typeof cell.v === 'number' && isDateNumberFormat(cell.z)) {
         const fromSerial = serialToDdMmYyyy(cell.v);
         if (fromSerial) {
@@ -245,6 +286,11 @@ export function sheetToGrid(workbook, sheetName) {
       }
       if (cell.v instanceof Date && !Number.isNaN(cell.v.getTime())) {
         row.push(jsDateToLocalDdMmYyyy(cell.v));
+        continue;
+      }
+      const display = cellDisplayText(cell);
+      if (display && isDateLikeDisplayString(display)) {
+        row.push(formatDisplayDateToDdMmYyyy(display, cell.z) || display);
         continue;
       }
       row.push(cell.v ?? '');
