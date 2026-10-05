@@ -5,6 +5,7 @@ import { searchClients } from './api.js';
  * @param {{
  *   selectedId: string,
  *   selectedLabel?: string,
+ *   loggedIn?: boolean,
  *   onSelect: (client: { _id: string, companyName: string, companyCode: string } | null) => void,
  *   onError?: (msg: string) => void,
  * }} props
@@ -12,6 +13,7 @@ import { searchClients } from './api.js';
 export default function EntitySearch({
   selectedId,
   selectedLabel = '',
+  loggedIn = false,
   onSelect,
   onError,
 }) {
@@ -30,6 +32,10 @@ export default function EntitySearch({
 
   const runSearch = useCallback(
     async (name) => {
+      if (!loggedIn) {
+        setOptions([]);
+        return;
+      }
       setLoading(true);
       try {
         const list = await searchClients(name);
@@ -42,7 +48,7 @@ export default function EntitySearch({
         setLoading(false);
       }
     },
-    [onError],
+    [loggedIn, onError],
   );
 
   useEffect(() => {
@@ -87,13 +93,17 @@ export default function EntitySearch({
       <input
         type="text"
         value={query}
-        placeholder="Search clients..."
+        placeholder={
+          loggedIn ? 'Search clients...' : 'Log in above to search clients'
+        }
+        disabled={!loggedIn}
         onChange={(e) => onInputChange(e.target.value)}
         onFocus={onFocus}
         style={{
           width: '100%',
           padding: '8px 10px',
           boxSizing: 'border-box',
+          opacity: loggedIn ? 1 : 0.6,
         }}
       />
       {selectedId ? (

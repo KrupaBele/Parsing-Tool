@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchBranches, fetchKeyMapping, saveKeyMapping } from "./api.js";
+import { getToken } from "./auth.js";
+import LoginBar from "./LoginBar.jsx";
 import {
   buildMappingWithSaved,
   mappingToHeaderNames,
@@ -75,6 +77,8 @@ export default function App() {
   const [savedHeaderMapping, setSavedHeaderMapping] = useState(null);
   const [savingMapping, setSavingMapping] = useState(false);
   const [mappingSaveMsg, setMappingSaveMsg] = useState("");
+  const [authTick, setAuthTick] = useState(0);
+  const loggedIn = useMemo(() => Boolean(getToken()), [authTick]);
 
   const fieldList = useMemo(
     () => mappingFieldsForTarget(targetType),
@@ -497,10 +501,23 @@ export default function App() {
         </p>
       </header>
 
+      <LoginBar
+        onAuthChange={() => {
+          setAuthTick((n) => n + 1);
+          if (!getToken()) {
+            setSelectedCompanyId("");
+            setSelectedCompanyName("");
+            setBranches([]);
+            setError("");
+          }
+        }}
+      />
+
       <div style={card}>
         <EntitySearch
           selectedId={selectedCompanyId}
           selectedLabel={selectedCompanyName}
+          loggedIn={loggedIn}
           onSelect={(c) => {
             setSelectedCompanyId(c?._id || "");
             setSelectedCompanyName(c?.companyName || "");
